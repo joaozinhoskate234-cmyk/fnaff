@@ -1,0 +1,97 @@
+# ===================== MLGBot =====================
+# Depois de editar, use /bot reload (vale para bots criados depois).
+
+# ===== Sala do bot (reduce) =====
+# O jogador digita /queue cmg (ou /bot join): vai para a arena, recebe o kit
+# (stick, blocos, picareta, livro e barreira) e o bot fica na frente dele.
+# Um admin marca a arena com /bot setarena (em pe, olhando na direcao do bot).
+queue:
+  command: queue
+  keyword: cmg
+
+reduce:
+  speed: 0.34                        # velocidade do bot para ficar na sua frente
+  distance: 2.2                      # distancia do bot ate voce (blocos)
+  hit-interval-ticks: 10             # tempo entre golpes do bot (20 ticks = 1 segundo)
+  hit-jitter-ticks: 3                # sorteia um pouco a mais
+  default-hit-power-horizontal: 0.4  # valor inicial do menu (0.4 comum, 0.9 sprint, 1.4 Knockback 1)
+  default-hit-power-vertical: 0.1
+  arena-fall-respawn-depth: 30       # se voce cair mais que isso abaixo da arena, volta pra ela
+
+kit:
+  block: SANDSTONE                   # bloco do kit (nunca acaba)
+  stick-knockback: 1                 # nivel de Knockback do stick
+
+# Modo padrao do /bot spawn:  reduce | fight | copy
+mode: reduce
+
+# Modo luta (fight)
+fight:
+  speed: 0.26                  # velocidade do bot (0.26 = correndo normal, maior = mais dificil)
+  attack-interval-ticks: 10    # tempo entre golpes do bot (20 ticks = 1 segundo)
+  attack-jitter-ticks: 6       # sorteia um pouco a mais para nao ficar robotico
+  knockback-level: 1           # forca do knockback do bot (e +1 quando ele esta correndo)
+  bridge: true                 # bot faz ponte para chegar ate voce
+  bridge-delay-ticks: 4        # velocidade da ponte (menor = mais rapido)
+  block: SANDSTONE             # bloco que o bot usa na ponte
+
+# Nome em cima da cabeca do bot (maximo 16 caracteres contando as cores)
+bot-name: "&cBot"
+
+# O bot usa a mesma skin de quem o criou
+copy-skin: true
+
+# Alcance dos golpes (em blocos), do jogador e do bot
+reach: 3.1
+
+# Tempo minimo entre dois golpes que causam knockback (20 ticks = 1 segundo)
+hit-cooldown-ticks: 10
+
+# Quantos ticks o bot demora para bater de volta depois que voce bate
+hit-back-delay-ticks: 2
+
+# Dano que o bot causa em voce (0 = so empurra, como no MLG Rush normal)
+bot-damage: 0.0
+
+# Forca do knockback (valores do Minecraft 1.8)
+knockback:
+  horizontal: 0.4
+  vertical: 0.4
+  # extra por nivel de Knockback no item da mao, e +1 nivel se estiver correndo (sprint)
+  per-level: 0.5
+
+# O que o bot copia de voce
+copy:
+  movement: true      # andar para frente, tras e lados
+  jump: true          # pular
+  sneak: true         # agachar (e nao cai da borda enquanto agachado)
+  swing: true         # bater (o bot bate quando voce bate)
+  block-place: true   # colocar bloco (o bot coloca um bloco na frente dele)
+  held-item: true     # item da mao e armadura aparecem no bot
+
+# Se o bot cair mais que isso abaixo de onde nasceu, ele volta pro ponto de spawn
+fall-respawn-depth: 25
+
+# Remove os blocos que o bot colocou quando ele for removido
+cleanup-blocks-on-remove: true
+max-bot-blocks: 300
+
+messages:
+  prefix: "&8[&cBot&8] &7"
+  no-arena: "&cA arena do bot ainda nao foi definida. Um admin precisa usar &f/bot setarena&c."
+  already-in: "&cVoce ja esta na sala do bot. Use &f/bot leave &cpara sair."
+  joined: "Voce entrou na sala do bot! Botao direito no &fLivro &7configura o bot e na &fBarreira &7voce sai."
+  left: "Voce saiu da sala do bot."
+  restored: "Seu inventario foi restaurado."
+  arena-set: "Arena do bot definida aqui."
+  not-in-room: "&cVoce nao esta na sala do bot."
+  spawned: "Bot criado no modo &f%mode%&7. Troque com &f/bot mode <reduce|fight|copy>&7. Tire com &f/bot remove&7."
+  mode-changed: "Modo do bot agora: &f%mode%"
+  bad-mode: "&cModo invalido. Use reduce, fight ou copy."
+  removed: "Bot removido."
+  fell: "O bot caiu! Quedas: &f%total%"
+  reloaded: "Configuracao recarregada."
+  no-permission: "&cVoce nao tem permissao."
+  usage: "Use: /bot <spawn [reduce|fight|copy]|mode <reduce|fight|copy>|join|leave|menu|setarena|remove|reload>"
+  only-players: "Apenas jogadores podem usar isso."
+  no-bot: "&cVoce nao tem um bot ativo."

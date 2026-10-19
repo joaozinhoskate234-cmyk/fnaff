@@ -1,0 +1,17 @@
+name: MLGBot
+version: 1.0.0
+main: me.mlgbot.MLGBotPlugin
+author: Servidor
+description: Bot de treino de MLG Rush (reduce) com sala, kit e menu de configuracao
+commands:
+  bot:
+    description: Controla o seu bot de treino
+    usage: /bot <spawn [reduce|fight|copy]|mode <reduce|fight|copy>|join|leave|menu|setarena|remove|reload>
+    aliases: [mlgbot]
+permissions:
+  mlgbot.use:
+    description: Permite usar /bot spawn e /bot remove
+    default: true
+  mlgbot.admin:
+    description: Permite usar /bot reload e /bot setarena
+    default: op
