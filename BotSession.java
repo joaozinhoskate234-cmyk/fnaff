@@ -83,7 +83,7 @@ public class BotSession {
     private final MLGBotPlugin plugin;
     private final Player owner;
     private final World world;
-    private final Location spawn;
+    private Location spawn;
     private final EntityPlayer npc;
     private final ItemStack[] equip = new ItemStack[5];
     private final List<Placed> placed = new ArrayList<Placed>();
@@ -133,6 +133,11 @@ public class BotSession {
         this.pitch = 0f;
 
         Settings s = plugin.settings();
+
+        // nasce em chao firme (se o ponto de 3 blocos a frente for vazio, procura outro)
+        placeNearOwner(pl, s, mode == Mode.REDUCE ? s.reduceDistance : 3.0);
+        this.spawn = new Location(world, x, y, z);
+        this.yaw = (float) Math.toDegrees(Math.atan2(-(pl.getX() - x), pl.getZ() - z));
 
         MinecraftServer server = ((CraftServer) Bukkit.getServer()).getServer();
         WorldServer ws = ((CraftWorld) world).getHandle();
@@ -350,15 +355,9 @@ public class BotSession {
         if (mode != Mode.COPY) {
             // ---------- MODO LUTA / REDUCE: vai atras do dono ----------
             boolean reduce = mode == Mode.REDUCE;
-            if (reduce && hd > 12.0) {
-                // ficou muito longe (ex.: o dono foi teleportado): aparece na frente dele
-                double oy = Math.toRadians(pl.getYaw());
-                x = px - Math.sin(oy) * s.reduceDistance;
-                z = pz + Math.cos(oy) * s.reduceDistance;
-                y = py;
-                vy = 0;
-                kbX = 0;
-                kbZ = 0;
+            if (reduce && (hd > 12.0 || y < py - 4.0)) {
+                // ficou muito longe, ou ficou sem chao: aparece em chao firme na frente do dono
+                placeNearOwner(pl, s, s.reduceDistance);
             }
             double yawRad = Math.toRadians(yaw);
             double dirX = -Math.sin(yawRad);
@@ -521,7 +520,7 @@ public class BotSession {
         }
 
         // caiu no void: volta pro spawn
-        if (y < spawn.getY() - s.fallDepth) {
+        if (mode != Mode.REDUCE && y < spawn.getY() - s.fallDepth) {
             respawn(s);
         }
 
@@ -571,6 +570,33 @@ public class BotSession {
             sneakUntil = tick + s.fightBridgeDelay + 2;
             owner.playSound(t.getLocation(), Sound.DIG_STONE, 0.8f, 1f);
         }
+    }
+
+    /**
+     * Poe o bot em chao firme perto do dono: tenta na frente dele e, se for vazio
+     * (ilha pequena, borda, buraco), tenta mais perto, ao lado de tras e por fim no lugar do dono.
+     */
+    private boolean placeNearOwner(Location pl, Settings s, double firstDist) {
+        double yawRad = Math.toRadians(pl.getYaw());
+        double[] dists = new double[] {firstDist, 1.6, 1.0, -1.5, 0.0};
+        double baseY = Math.floor(pl.getY());
+        for (double d : dists) {
+            double cx = pl.getX() - Math.sin(yawRad) * d;
+            double cz = pl.getZ() + Math.cos(yawRad) * d;
+            for (double yy = baseY + 1.0; yy >= baseY - 3.0; yy -= 1.0) {
+                if (!collides(cx, yy, cz) && supported(cx, yy, cz)) {
+                    x = cx;
+                    y = yy;
+                    z = cz;
+                    vy = 0;
+                    kbX = 0;
+                    kbZ = 0;
+                    onGround = true;
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private void respawn(Settings s) {
