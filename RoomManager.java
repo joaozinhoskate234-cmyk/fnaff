@@ -5,6 +5,8 @@ import org.bukkit.ChatColor;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
+import org.bukkit.WorldCreator;
 import org.bukkit.block.Block;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.enchantments.Enchantment;
@@ -35,7 +37,9 @@ public class RoomManager {
     private static class Saved {
         ItemStack[] inv;
         ItemStack[] armor;
-        Location loc;
+        String lw;
+        double lx, ly, lz;
+        float lyaw, lpitch;
         GameMode gm;
     }
 
@@ -53,7 +57,12 @@ public class RoomManager {
     private final File dataFile;
     private final File savedDir;
     private final YamlConfiguration data;
-    private Location arena;
+    // a arena e guardada como texto + numeros (nao como objeto Location), assim
+    // nao quebra se o mundo ainda nao carregou quando o plugin liga
+    private boolean arenaSet;
+    private String arenaWorld;
+    private double ax, ay, az;
+    private float ayaw, apitch;
 
     private final Set<UUID> inRoom = new HashSet<UUID>();
     private final Map<UUID, Saved> saved = new HashMap<UUID, Saved>();
@@ -66,10 +75,29 @@ public class RoomManager {
         this.savedDir = new File(plugin.getDataFolder(), "saved");
         this.savedDir.mkdirs();
         this.data = YamlConfiguration.loadConfiguration(dataFile);
-        Object o = data.get("arena");
-        if (o instanceof Location) {
-            this.arena = (Location) o;
+        if (data.contains("arena.world")) {
+            this.arenaWorld = data.getString("arena.world");
+            this.ax = data.getDouble("arena.x");
+            this.ay = data.getDouble("arena.y");
+            this.az = data.getDouble("arena.z");
+            this.ayaw = (float) data.getDouble("arena.yaw");
+            this.apitch = (float) data.getDouble("arena.pitch");
+            this.arenaSet = arenaWorld != null;
+        } else {
+            Object o = data.get("arena");
+            if (o instanceof Location && ((Location) o).getWorld() != null) {
+                setArena((Location) o); // migra o formato antigo
+            }
         }
+        if (arenaSet) {
+            plugin.getLogger().info("Arena carregada: mundo " + arenaWorld + " (" + (int) ax + ", " + (int) ay + ", " + (int) az + ")");
+        } else {
+            plugin.getLogger().info("Arena ainda nao definida. Use /bot setarena dentro do mapa.");
+        }
+    }
+
+    private static String warn(String text) {
+        return ChatColor.translateAlternateColorCodes('&', "&8[&cBot&8] &c" + text);
     }
 
     // ------------------------------------------------------------------
@@ -139,13 +167,47 @@ public class RoomManager {
     // Arena e preferencias
     // ------------------------------------------------------------------
 
-    public Location getArena() {
-        return arena;
+    public boolean isArenaSet() {
+        return arenaSet;
+    }
+
+    /** Local da arena, ou null se o mundo nao esta carregado. */
+    public Location getArena(boolean tryLoadWorld) {
+        if (!arenaSet) {
+            return null;
+        }
+        World w = Bukkit.getWorld(arenaWorld);
+        if (w == null && tryLoadWorld) {
+            File level = new File(new File(Bukkit.getWorldContainer(), arenaWorld), "level.dat");
+            if (level.exists()) {
+                try {
+                    w = Bukkit.createWorld(new WorldCreator(arenaWorld));
+                } catch (Exception ex) {
+                    plugin.getLogger().warning("Nao consegui carregar o mundo " + arenaWorld + ": " + ex.getMessage());
+                }
+            }
+        }
+        if (w == null) {
+            return null;
+        }
+        return new Location(w, ax, ay, az, ayaw, apitch);
     }
 
     public void setArena(Location l) {
-        this.arena = l.clone();
-        data.set("arena", arena);
+        this.arenaWorld = l.getWorld().getName();
+        this.ax = l.getX();
+        this.ay = l.getY();
+        this.az = l.getZ();
+        this.ayaw = l.getYaw();
+        this.apitch = l.getPitch();
+        this.arenaSet = true;
+        data.set("arena", null);
+        data.set("arena.world", arenaWorld);
+        data.set("arena.x", ax);
+        data.set("arena.y", ay);
+        data.set("arena.z", az);
+        data.set("arena.yaw", (double) ayaw);
+        data.set("arena.pitch", (double) apitch);
         saveData();
     }
 
@@ -192,7 +254,7 @@ public class RoomManager {
         return inRoom.contains(p.getUniqueId());
     }
 
-    private Location botLocation() {
+    private Location botLocation(Location arena) {
         Vector dir = arena.getDirection();
         dir.setY(0);
         if (dir.lengthSquared() < 1.0E-6) {
@@ -206,7 +268,7 @@ public class RoomManager {
 
     public void join(Player p) {
         Settings s = plugin.settings();
-        if (arena == null || arena.getWorld() == null) {
+        if (!arenaSet) {
             p.sendMessage(s.msg("no-arena"));
             return;
         }
@@ -214,19 +276,40 @@ public class RoomManager {
             p.sendMessage(s.msg("already-in"));
             return;
         }
+        Location arena = getArena(true);
+        if (arena == null) {
+            p.sendMessage(warn("O mundo da arena (&f" + arenaWorld + "&c) nao esta carregado no servidor. "
+                    + "Carregue o mundo ou use &f/bot setarena &cdentro do mapa de novo."));
+            return;
+        }
         plugin.stopBot(p);
 
+        // guarda o estado antes de mexer em qualquer coisa
         UUID id = p.getUniqueId();
         PlayerInventory pi = p.getInventory();
+        Location from = p.getLocation();
         Saved sv = new Saved();
         sv.inv = cloneItems(pi.getContents());
         sv.armor = cloneItems(pi.getArmorContents());
-        sv.loc = p.getLocation().clone();
+        sv.lw = from.getWorld().getName();
+        sv.lx = from.getX();
+        sv.ly = from.getY();
+        sv.lz = from.getZ();
+        sv.lyaw = from.getYaw();
+        sv.lpitch = from.getPitch();
         sv.gm = p.getGameMode();
+
+        // primeiro o teleporte: se outro plugin bloquear, nada foi alterado
+        if (!p.teleport(arena)) {
+            p.sendMessage(warn("Nao consegui te levar para a arena (outro plugin bloqueou o teleporte)."));
+            return;
+        }
+
         saved.put(id, sv);
         writeSaved(id, sv);
-
         inRoom.add(id);
+
+        pi = p.getInventory();
         pi.clear();
         pi.setArmorContents(new ItemStack[4]);
         p.setGameMode(GameMode.SURVIVAL);
@@ -237,10 +320,9 @@ public class RoomManager {
         for (PotionEffect pe : new ArrayList<PotionEffect>(p.getActivePotionEffects())) {
             p.removePotionEffect(pe.getType());
         }
-        p.teleport(arena);
         giveKit(p);
         p.sendMessage(s.msg("joined"));
-        plugin.startBot(p, botLocation(), BotSession.Mode.REDUCE);
+        plugin.startBot(p, botLocation(arena), BotSession.Mode.REDUCE);
     }
 
     public void leave(Player p, boolean teleportBack) {
@@ -273,13 +355,23 @@ public class RoomManager {
             if (sv.gm != null) {
                 p.setGameMode(sv.gm);
             }
-            if (teleportBack && sv.loc != null && sv.loc.getWorld() != null) {
-                p.teleport(sv.loc);
+            if (teleportBack) {
+                backTeleport(p, sv);
             }
         }
         p.setFallDistance(0f);
         p.updateInventory();
         deleteSaved(id);
+    }
+
+    /** Volta para onde o jogador estava; se aquele mundo sumiu, vai para o spawn do mundo principal. */
+    private void backTeleport(Player p, Saved sv) {
+        World w = sv.lw == null ? null : Bukkit.getWorld(sv.lw);
+        if (w != null) {
+            p.teleport(new Location(w, sv.lx, sv.ly, sv.lz, sv.lyaw, sv.lpitch));
+        } else if (!Bukkit.getWorlds().isEmpty()) {
+            p.teleport(Bukkit.getWorlds().get(0).getSpawnLocation());
+        }
     }
 
     public void leaveAll() {
@@ -311,9 +403,7 @@ public class RoomManager {
             if (sv.gm != null) {
                 p.setGameMode(sv.gm);
             }
-            if (sv.loc != null && sv.loc.getWorld() != null) {
-                p.teleport(sv.loc);
-            }
+            backTeleport(p, sv);
             p.updateInventory();
             p.sendMessage(plugin.settings().msg("restored"));
         }
@@ -333,7 +423,11 @@ public class RoomManager {
 
     /** Quem cai da arena volta para o ponto inicial. */
     public void tick() {
-        if (inRoom.isEmpty() || arena == null) {
+        if (inRoom.isEmpty() || !arenaSet) {
+            return;
+        }
+        Location arena = getArena(false);
+        if (arena == null) {
             return;
         }
         double depth = plugin.settings().arenaFallDepth;
@@ -371,7 +465,12 @@ public class RoomManager {
             for (int i = 0; i < sv.armor.length; i++) {
                 y.set("armor." + i, sv.armor[i]);
             }
-            y.set("loc", sv.loc);
+            y.set("loc.world", sv.lw);
+            y.set("loc.x", sv.lx);
+            y.set("loc.y", sv.ly);
+            y.set("loc.z", sv.lz);
+            y.set("loc.yaw", (double) sv.lyaw);
+            y.set("loc.pitch", (double) sv.lpitch);
             y.set("gm", sv.gm == null ? "SURVIVAL" : sv.gm.name());
             y.save(new File(savedDir, id + ".yml"));
         } catch (Exception ex) {
@@ -394,9 +493,24 @@ public class RoomManager {
         for (int i = 0; i < 4; i++) {
             sv.armor[i] = y.getItemStack("armor." + i);
         }
-        Object o = y.get("loc");
-        if (o instanceof Location) {
-            sv.loc = (Location) o;
+        if (y.contains("loc.world")) {
+            sv.lw = y.getString("loc.world");
+            sv.lx = y.getDouble("loc.x");
+            sv.ly = y.getDouble("loc.y");
+            sv.lz = y.getDouble("loc.z");
+            sv.lyaw = (float) y.getDouble("loc.yaw");
+            sv.lpitch = (float) y.getDouble("loc.pitch");
+        } else {
+            Object o = y.get("loc");
+            if (o instanceof Location && ((Location) o).getWorld() != null) {
+                Location l = (Location) o;
+                sv.lw = l.getWorld().getName();
+                sv.lx = l.getX();
+                sv.ly = l.getY();
+                sv.lz = l.getZ();
+                sv.lyaw = l.getYaw();
+                sv.lpitch = l.getPitch();
+            }
         }
         try {
             sv.gm = GameMode.valueOf(y.getString("gm", "SURVIVAL"));
