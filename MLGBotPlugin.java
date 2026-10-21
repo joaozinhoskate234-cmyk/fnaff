@@ -244,7 +244,16 @@ public class MLGBotPlugin extends JavaPlugin implements Listener {
             return true;
         }
 
-        if (sub.equals("spawn") || sub.equals("fight") || sub.equals("copy") || sub.equals("reduce")) {
+        if (sub.equals("reset")) {
+            PlayerPrefs ps = rooms.prefs(p);
+            ps.resetToDefaults(settings.defaultHitH, settings.defaultHitV);
+            rooms.savePrefs();
+            p.sendMessage(info("Configuracoes do bot voltaram ao padrao."));
+            restartIfActive(p);
+            return true;
+        }
+
+        if (sub.equals("spawn") || sub.equals("fight") || sub.equals("copy") || sub.equals("reduce") || sub.equals("reducer")) {
             BotSession.Mode mode = BotSession.Mode.parse(settings.defaultMode);
             if (mode == null) {
                 mode = BotSession.Mode.REDUCE;

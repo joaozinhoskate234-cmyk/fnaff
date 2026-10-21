@@ -66,7 +66,7 @@ public class BotSession {
             if (t.equals("copy") || t.equals("copiar") || t.equals("espelho") || t.equals("espelhar")) {
                 return COPY;
             }
-            if (t.equals("reduce") || t.equals("reduzir") || t.equals("red")) {
+            if (t.equals("reduce") || t.equals("reducer") || t.equals("reduzir") || t.equals("red")) {
                 return REDUCE;
             }
             return null;

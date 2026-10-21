@@ -37,6 +37,7 @@ public class BotMenu implements InventoryHolder {
     private static final int S_SKIN = 30;
     private static final int S_FINISH = 32;
     private static final int S_CLOSE = 40;
+    private static final int S_RESET = 44;
 
     private static final Random RND = new Random();
 
@@ -155,6 +156,10 @@ public class BotMenu implements InventoryHolder {
                 "&7finish: &c" + finish,
                 "&7best time: &c" + (ps.bestTime > 0 ? fmt(ps.bestTime) + "s" : "-"), "",
                 "&8Click: use the spot where you are standing"));
+        inv.setItem(S_RESET, RoomManager.item(Material.REDSTONE_BLOCK, 1, "&cReset to defaults",
+                "&7hit power 0.4, vertical 0.1, radius 3.5",
+                "&7chill out and epic moves off",
+                "&7mode: Aim/Reduce training"));
         inv.setItem(S_CLOSE, RoomManager.item(Material.BARRIER, 1, "&cClose"));
     }
 
@@ -226,6 +231,9 @@ public class BotMenu implements InventoryHolder {
             ps.finishX = l.getX();
             ps.finishY = l.getY();
             ps.finishZ = l.getZ();
+        } else if (slot == S_RESET) {
+            ps.resetToDefaults(plugin.settings().defaultHitH, plugin.settings().defaultHitV);
+            modeChanged = true;
         } else if (slot == S_CLOSE) {
             player.closeInventory();
             return;

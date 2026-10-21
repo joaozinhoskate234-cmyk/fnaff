@@ -41,6 +41,18 @@ public class PlayerPrefs {
     /** Melhor tempo no Bridging (segundos), 0 = nenhum. */
     public double bestTime;
 
+    /** Volta as configuracoes de luta para o padrao (nao mexe em skin, nick, ponto de chegada e recordes). */
+    public void resetToDefaults(double defaultH, double defaultV) {
+        training = Training.AIM_REDUCE;
+        hitH = defaultH;
+        hitV = defaultV;
+        radius = 3.5;
+        seriesHits = 3;
+        seriesPause = 2.0;
+        chillOut = false;
+        epicMoves = false;
+    }
+
     public PlayerPrefs(double hitH, double hitV) {
         this.hitH = hitH;
         this.hitV = hitV;
