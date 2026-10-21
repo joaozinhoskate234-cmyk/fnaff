@@ -68,6 +68,7 @@ public class RoomManager {
     private final Map<UUID, Saved> saved = new HashMap<UUID, Saved>();
     private final Map<UUID, PlayerPrefs> prefs = new HashMap<UUID, PlayerPrefs>();
     private final Map<UUID, List<Placed>> placed = new HashMap<UUID, List<Placed>>();
+    private final Map<UUID, Long> bridgeStart = new HashMap<UUID, Long>();
 
     public RoomManager(MLGBotPlugin plugin) {
         this.plugin = plugin;
@@ -94,6 +95,14 @@ public class RoomManager {
         } else {
             plugin.getLogger().info("Arena ainda nao definida. Use /bot setarena dentro do mapa.");
         }
+    }
+
+    public static String color(String s) {
+        return ChatColor.translateAlternateColorCodes('&', s);
+    }
+
+    private static void say(Player p, String text) {
+        p.sendMessage(color("&8[&cBot&8] &7" + text));
     }
 
     private static String warn(String text) {
@@ -178,14 +187,7 @@ public class RoomManager {
         }
         World w = Bukkit.getWorld(arenaWorld);
         if (w == null && tryLoadWorld) {
-            File level = new File(new File(Bukkit.getWorldContainer(), arenaWorld), "level.dat");
-            if (level.exists()) {
-                try {
-                    w = Bukkit.createWorld(new WorldCreator(arenaWorld));
-                } catch (Exception ex) {
-                    plugin.getLogger().warning("Nao consegui carregar o mundo " + arenaWorld + ": " + ex.getMessage());
-                }
-            }
+            w = loadWorld(arenaWorld);
         }
         if (w == null) {
             return null;
@@ -193,13 +195,36 @@ public class RoomManager {
         return new Location(w, ax, ay, az, ayaw, apitch);
     }
 
+    /** Carrega um mundo que esta como pasta no servidor (com level.dat). Null se nao existir. */
+    public World loadWorld(String name) {
+        World w = Bukkit.getWorld(name);
+        if (w != null) {
+            return w;
+        }
+        File level = new File(new File(Bukkit.getWorldContainer(), name), "level.dat");
+        if (!level.exists()) {
+            return null;
+        }
+        try {
+            return Bukkit.createWorld(new WorldCreator(name).generator(new VoidGenerator()));
+        } catch (Exception ex) {
+            plugin.getLogger().warning("Nao consegui carregar o mundo " + name + ": " + ex.getMessage());
+            return null;
+        }
+    }
+
     public void setArena(Location l) {
-        this.arenaWorld = l.getWorld().getName();
-        this.ax = l.getX();
-        this.ay = l.getY();
-        this.az = l.getZ();
-        this.ayaw = l.getYaw();
-        this.apitch = l.getPitch();
+        setArenaRaw(l.getWorld().getName(), l.getX(), l.getY(), l.getZ(), l.getYaw(), l.getPitch());
+    }
+
+    /** Define a arena so com o nome do mundo e as coordenadas (nao precisa estar la). */
+    public void setArenaRaw(String world, double x, double y, double z, float yaw, float pitch) {
+        this.arenaWorld = world;
+        this.ax = x;
+        this.ay = y;
+        this.az = z;
+        this.ayaw = yaw;
+        this.apitch = pitch;
         this.arenaSet = true;
         data.set("arena", null);
         data.set("arena.world", arenaWorld);
@@ -229,6 +254,25 @@ public class RoomManager {
                     data.getDouble(base + "hit-v", s.defaultHitV));
             ps.chillOut = data.getBoolean(base + "chill-out", false);
             ps.epicMoves = data.getBoolean(base + "epic-moves", false);
+            ps.radius = data.getDouble(base + "radius", 3.5);
+            ps.seriesHits = data.getInt(base + "series-hits", 3);
+            ps.seriesPause = data.getDouble(base + "series-pause", 2.0);
+            try {
+                ps.training = PlayerPrefs.Training.valueOf(data.getString(base + "training", "AIM_REDUCE"));
+            } catch (IllegalArgumentException ex) {
+                ps.training = PlayerPrefs.Training.AIM_REDUCE;
+            }
+            ps.botNick = data.getString(base + "bot-nick", null);
+            ps.skinNick = data.getString(base + "skin-nick", null);
+            ps.skinValue = data.getString(base + "skin-value", null);
+            ps.skinSignature = data.getString(base + "skin-signature", null);
+            ps.finishSet = data.getBoolean(base + "finish.set", false);
+            ps.finishWorld = data.getString(base + "finish.world", null);
+            ps.finishX = data.getDouble(base + "finish.x");
+            ps.finishY = data.getDouble(base + "finish.y");
+            ps.finishZ = data.getDouble(base + "finish.z");
+            ps.bestTime = data.getDouble(base + "best-time", 0.0);
+            ps.bestHits = data.getInt(base + "best-hits", 0);
             prefs.put(id, ps);
         }
         return ps;
@@ -242,6 +286,21 @@ public class RoomManager {
             data.set(base + "hit-v", ps.hitV);
             data.set(base + "chill-out", ps.chillOut);
             data.set(base + "epic-moves", ps.epicMoves);
+            data.set(base + "radius", ps.radius);
+            data.set(base + "series-hits", ps.seriesHits);
+            data.set(base + "series-pause", ps.seriesPause);
+            data.set(base + "training", ps.training.name());
+            data.set(base + "bot-nick", ps.botNick);
+            data.set(base + "skin-nick", ps.skinNick);
+            data.set(base + "skin-value", ps.skinValue);
+            data.set(base + "skin-signature", ps.skinSignature);
+            data.set(base + "finish.set", ps.finishSet);
+            data.set(base + "finish.world", ps.finishWorld);
+            data.set(base + "finish.x", ps.finishX);
+            data.set(base + "finish.y", ps.finishY);
+            data.set(base + "finish.z", ps.finishZ);
+            data.set(base + "best-time", ps.bestTime);
+            data.set(base + "best-hits", ps.bestHits);
         }
         saveData();
     }
@@ -322,7 +381,84 @@ public class RoomManager {
         }
         giveKit(p);
         p.sendMessage(s.msg("joined"));
+        enforceSurvival(p, 3L);
+        enforceSurvival(p, 25L);
+        restartBot(p);
+    }
+
+    /** Alguns plugins mudam o modo de jogo ao trocar de mundo: garante que da pra construir. */
+    private void enforceSurvival(final Player p, long delay) {
+        Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
+            public void run() {
+                if (p.isOnline() && isInRoom(p) && p.getGameMode() != GameMode.SURVIVAL) {
+                    p.setGameMode(GameMode.SURVIVAL);
+                }
+            }
+        }, delay);
+    }
+
+    /** Liga o bot conforme o modo escolhido no menu (no Bridging nao tem bot). */
+    public void restartBot(Player p) {
+        if (!isInRoom(p)) {
+            return;
+        }
+        PlayerPrefs ps = prefs(p);
+        if (ps.training == PlayerPrefs.Training.BRIDGING) {
+            plugin.stopBot(p);
+            bridgeStart.remove(p.getUniqueId());
+            clearBlocks(p);
+            if (ps.finishSet) {
+                say(p, "Modo &fBridging&7: coloque o primeiro bloco para iniciar o cronometro e chegue ao ponto de chegada.");
+            } else {
+                say(p, "Modo &fBridging&7: defina o ponto de chegada. Fique no ponto final e clique no &fBeacon &7do livro.");
+            }
+            return;
+        }
+        Location arena = getArena(false);
+        if (arena == null) {
+            return;
+        }
         plugin.startBot(p, botLocation(arena), BotSession.Mode.REDUCE);
+    }
+
+    // ------------------------------------------------------------------
+    // Blocos do jogador e cronometro do Bridging
+    // ------------------------------------------------------------------
+
+    /** O jogador colocou um bloco na sala: no Bridging isso inicia o cronometro. */
+    public void onRoomPlace(Player p) {
+        PlayerPrefs ps = prefs(p);
+        if (ps.training == PlayerPrefs.Training.BRIDGING && ps.finishSet
+                && !bridgeStart.containsKey(p.getUniqueId())) {
+            bridgeStart.put(p.getUniqueId(), System.currentTimeMillis());
+            say(p, "Cronometro iniciado!");
+        }
+    }
+
+    /** True (e esquece o bloco) se o bloco foi colocado pelo proprio jogador na sala. */
+    public boolean untrackIfTracked(Player p, Block b) {
+        List<Placed> list = placed.get(p.getUniqueId());
+        if (list == null) {
+            return false;
+        }
+        for (int i = 0; i < list.size(); i++) {
+            if (list.get(i).block.equals(b)) {
+                list.remove(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public void clearBlocks(Player p) {
+        List<Placed> list = placed.remove(p.getUniqueId());
+        if (list != null) {
+            for (Placed pl : list) {
+                if (pl.block.getTypeId() == pl.typeId) {
+                    pl.block.setType(Material.AIR);
+                }
+            }
+        }
     }
 
     public void leave(Player p, boolean teleportBack) {
@@ -332,6 +468,7 @@ public class RoomManager {
         }
         plugin.stopBot(p);
         inRoom.remove(id);
+        bridgeStart.remove(id);
 
         List<Placed> list = placed.remove(id);
         if (list != null) {
@@ -436,10 +573,41 @@ public class RoomManager {
             if (p == null || !p.isOnline()) {
                 continue;
             }
+            PlayerPrefs ps = prefs(p);
+            boolean bridging = ps.training == PlayerPrefs.Training.BRIDGING;
             if (p.getWorld().equals(arena.getWorld()) && p.getLocation().getY() < arena.getY() - depth) {
                 p.setFallDistance(0f);
                 p.setVelocity(new Vector(0, 0, 0));
                 p.teleport(arena);
+                plugin.onPlayerFell(p);
+                if (bridging) {
+                    bridgeStart.remove(id);
+                    clearBlocks(p);
+                }
+                continue;
+            }
+            if (bridging && ps.finishSet && bridgeStart.containsKey(id)) {
+                Location pl = p.getLocation();
+                if (pl.getWorld().getName().equals(ps.finishWorld)) {
+                    double fdx = pl.getX() - ps.finishX;
+                    double fdz = pl.getZ() - ps.finishZ;
+                    double fdy = pl.getY() - ps.finishY;
+                    if (fdx * fdx + fdz * fdz < 2.25 && Math.abs(fdy) < 2.5) {
+                        double secs = (System.currentTimeMillis() - bridgeStart.remove(id)) / 1000.0;
+                        String t = String.format(java.util.Locale.US, "%.2f", secs);
+                        if (ps.bestTime <= 0 || secs < ps.bestTime) {
+                            ps.bestTime = secs;
+                            savePrefs();
+                            say(p, "&aNovo recorde! &fTempo: " + t + "s");
+                        } else {
+                            say(p, "Tempo: &f" + t + "s &7(recorde: " + String.format(java.util.Locale.US, "%.2f", ps.bestTime) + "s)");
+                        }
+                        clearBlocks(p);
+                        p.setFallDistance(0f);
+                        p.setVelocity(new Vector(0, 0, 0));
+                        p.teleport(arena);
+                    }
+                }
             }
         }
     }

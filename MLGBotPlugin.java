@@ -1,8 +1,11 @@
 package me.mlgbot;
 
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
@@ -10,6 +13,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.FoodLevelChangeEvent;
@@ -19,6 +23,7 @@ import org.bukkit.event.player.PlayerAnimationEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerGameModeChangeEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -64,6 +69,10 @@ public class MLGBotPlugin extends JavaPlugin implements Listener {
         return settings;
     }
 
+    private static String info(String text) {
+        return ChatColor.translateAlternateColorCodes('&', "&8[&cBot&8] &7" + text);
+    }
+
     public RoomManager rooms() {
         return rooms;
     }
@@ -77,6 +86,14 @@ public class MLGBotPlugin extends JavaPlugin implements Listener {
         BotSession s = new BotSession(this, p, loc, mode, rooms.prefs(p));
         sessions.put(p.getUniqueId(), s);
         return s;
+    }
+
+    /** O jogador caiu da arena: fecha a contagem de golpes aguentados. */
+    public void onPlayerFell(Player p) {
+        BotSession s = sessions.get(p.getUniqueId());
+        if (s != null) {
+            s.onOwnerFell();
+        }
     }
 
     public void stopBot(Player p) {
@@ -113,6 +130,11 @@ public class MLGBotPlugin extends JavaPlugin implements Listener {
 
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+        String cname = cmd.getName().toLowerCase();
+        if (cname.equals("botskin") || cname.equals("botnick")) {
+            return nickCommand(sender, cname, args);
+        }
+
         String sub = args.length > 0 ? args[0].toLowerCase() : "spawn";
 
         if (sub.equals("reload")) {
@@ -126,11 +148,62 @@ public class MLGBotPlugin extends JavaPlugin implements Listener {
             return true;
         }
 
+        if (sub.equals("setarena") && args.length >= 5) {
+            // /bot setarena <mundo> <x> <y> <z> [yaw]  (nao precisa estar no mapa)
+            if (!sender.hasPermission("mlgbot.admin")) {
+                sender.sendMessage(settings.msg("no-permission"));
+                return true;
+            }
+            try {
+                double x = Double.parseDouble(args[2]);
+                double y = Double.parseDouble(args[3]);
+                double z = Double.parseDouble(args[4]);
+                float yaw = args.length >= 6 ? Float.parseFloat(args[5]) : 0f;
+                rooms.setArenaRaw(args[1], x, y, z, yaw, 0f);
+                sender.sendMessage(info("Arena definida: mundo &f" + args[1] + "&7, x=" + x + " y=" + y + " z=" + z));
+            } catch (NumberFormatException ex) {
+                sender.sendMessage(info("&cUse: /bot setarena <mundo> <x> <y> <z> [yaw]"));
+            }
+            return true;
+        }
+
         if (!(sender instanceof Player)) {
             sender.sendMessage(settings.msg("only-players"));
             return true;
         }
         Player p = (Player) sender;
+
+        if (sub.equals("where")) {
+            Location l = p.getLocation();
+            p.sendMessage(info("Mundo: &f" + l.getWorld().getName()
+                    + "&7  x=&f" + Math.round(l.getX() * 10.0) / 10.0
+                    + "&7 y=&f" + Math.round(l.getY() * 10.0) / 10.0
+                    + "&7 z=&f" + Math.round(l.getZ() * 10.0) / 10.0));
+            return true;
+        }
+
+        if (sub.equals("world")) {
+            if (!p.hasPermission("mlgbot.admin")) {
+                p.sendMessage(settings.msg("no-permission"));
+                return true;
+            }
+            if (args.length < 2) {
+                p.sendMessage(info("&cUse: /bot world <nome da pasta do mundo>"));
+                return true;
+            }
+            World w = rooms.loadWorld(args[1]);
+            if (w == null) {
+                p.sendMessage(info("&cNao achei o mundo &f" + args[1]
+                        + "&c. A pasta dele precisa estar na pasta principal do servidor (ao lado do server.properties)."));
+                return true;
+            }
+            p.teleport(w.getSpawnLocation().clone().add(0.5, 1.0, 0.5));
+            p.setAllowFlight(true);
+            p.setFlying(true);
+            p.sendMessage(info("Voce esta no mundo &f" + w.getName()
+                    + "&7 e pode voar. Va ate o ponto da arena e use &f/bot setarena&7."));
+            return true;
+        }
 
         if (sub.equals("setarena")) {
             if (!p.hasPermission("mlgbot.admin")) {
@@ -138,6 +211,10 @@ public class MLGBotPlugin extends JavaPlugin implements Listener {
                 return true;
             }
             rooms.setArena(p.getLocation());
+            if (p.getGameMode() != GameMode.CREATIVE && p.getGameMode() != GameMode.SPECTATOR) {
+                p.setFlying(false);
+                p.setAllowFlight(false);
+            }
             p.sendMessage(settings.msg("arena-set"));
             return true;
         }
@@ -226,6 +303,70 @@ public class MLGBotPlugin extends JavaPlugin implements Listener {
         return true;
     }
 
+    private boolean nickCommand(CommandSender sender, String cname, String[] args) {
+        if (!(sender instanceof Player)) {
+            sender.sendMessage(settings.msg("only-players"));
+            return true;
+        }
+        Player p = (Player) sender;
+        if (!p.hasPermission("mlgbot.use")) {
+            p.sendMessage(settings.msg("no-permission"));
+            return true;
+        }
+        if (args.length < 1) {
+            p.sendMessage(info("&cUse: /" + cname + " <nickname>"));
+            return true;
+        }
+        if (cname.equals("botskin")) {
+            applySkin(p, args[0]);
+        } else {
+            String nick = args[0];
+            if (nick.length() > 16) {
+                nick = nick.substring(0, 16);
+            }
+            PlayerPrefs ps = rooms.prefs(p);
+            ps.botNick = nick;
+            rooms.savePrefs();
+            p.sendMessage(info("Nick do bot: &f" + nick));
+            restartIfActive(p);
+        }
+        return true;
+    }
+
+    /** Busca a skin pelo nick (Mojang) e recria o bot com ela. */
+    public void applySkin(final Player p, final String nick) {
+        p.sendMessage(info("Buscando a skin de &f" + nick + "&7..."));
+        SkinFetcher.fetch(this, p, nick, new SkinFetcher.Callback() {
+            public void done(String realNick, String value, String signature) {
+                if (!p.isOnline()) {
+                    return;
+                }
+                if (value == null) {
+                    p.sendMessage(info("&cNao achei a skin de &f" + nick + "&c. Confira o nick."));
+                    return;
+                }
+                PlayerPrefs ps = rooms.prefs(p);
+                ps.skinNick = realNick;
+                ps.skinValue = value;
+                ps.skinSignature = signature;
+                rooms.savePrefs();
+                p.sendMessage(info("Skin do bot: &f" + realNick));
+                restartIfActive(p);
+            }
+        });
+    }
+
+    private void restartIfActive(Player p) {
+        if (rooms.isInRoom(p)) {
+            rooms.restartBot(p);
+            return;
+        }
+        BotSession s = sessions.get(p.getUniqueId());
+        if (s != null) {
+            startBot(p, p.getLocation(), s.getMode());
+        }
+    }
+
     /** /queue cmg entra na sala do bot (funciona mesmo que outro plugin tenha o /queue). */
     @EventHandler(priority = EventPriority.LOWEST)
     public void onCommandPre(PlayerCommandPreprocessEvent e) {
@@ -268,40 +409,72 @@ public class MLGBotPlugin extends JavaPlugin implements Listener {
         }
     }
 
-    @EventHandler(ignoreCancelled = true)
+    /** Na sala do bot o jogador pode colocar blocos, mesmo que outro plugin do servidor bloqueie. */
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlace(BlockPlaceEvent e) {
         Player p = e.getPlayer();
+        boolean inRoom = rooms.isInRoom(p);
+        if (inRoom) {
+            e.setCancelled(false);
+            e.setBuild(true);
+        }
+        if (e.isCancelled()) {
+            return;
+        }
         BotSession s = sessions.get(p.getUniqueId());
         if (s != null) {
             s.onOwnerPlace(e.getBlockPlaced());
         }
-        if (rooms.isInRoom(p)) {
+        if (inRoom) {
             rooms.trackBlock(p, e.getBlockPlaced());
+            rooms.onRoomPlace(p);
             rooms.scheduleRefill(p);
         }
     }
 
-    @EventHandler
+    /** Na sala so se quebra o que o proprio jogador colocou (o mapa fica protegido). */
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onBreak(BlockBreakEvent e) {
+        Player p = e.getPlayer();
+        if (!rooms.isInRoom(p)) {
+            return;
+        }
+        e.setCancelled(true);
+        if (rooms.untrackIfTracked(p, e.getBlock())) {
+            e.getBlock().setType(Material.AIR);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onInteract(PlayerInteractEvent e) {
         Player p = e.getPlayer();
         if (!rooms.isInRoom(p)) {
             return;
         }
         Action a = e.getAction();
-        if (a != Action.RIGHT_CLICK_AIR && a != Action.RIGHT_CLICK_BLOCK) {
-            return;
-        }
+        boolean right = a == Action.RIGHT_CLICK_AIR || a == Action.RIGHT_CLICK_BLOCK;
         ItemStack it = e.getItem();
-        if (it == null) {
-            return;
-        }
-        if (it.getType() == Material.BOOK) {
+        if (right && it != null && it.getType() == Material.BOOK) {
             e.setCancelled(true);
             new BotMenu(this, p).open();
-        } else if (it.getType() == Material.BARRIER) {
+            return;
+        }
+        if (right && it != null && it.getType() == Material.BARRIER) {
             e.setCancelled(true);
             rooms.leave(p, true);
             p.sendMessage(settings.msg("left"));
+            return;
+        }
+        // outro plugin bloqueou o clique em bloco: libera dentro da sala
+        if (e.isCancelled() && (a == Action.RIGHT_CLICK_BLOCK || a == Action.LEFT_CLICK_BLOCK)) {
+            e.setCancelled(false);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onGameMode(PlayerGameModeChangeEvent e) {
+        if (rooms.isInRoom(e.getPlayer()) && e.getNewGameMode() != GameMode.SURVIVAL) {
+            e.setCancelled(true);
         }
     }
 

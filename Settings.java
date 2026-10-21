@@ -43,6 +43,7 @@ public class Settings {
     public int reduceInterval;
     public int reduceJitter;
     public double reduceDistance;
+    public double reduceStartDistance;
     public double defaultHitH;
     public double defaultHitV;
     public double arenaFallDepth;
@@ -88,6 +89,7 @@ public class Settings {
         s.reduceInterval = c.getInt("reduce.hit-interval-ticks", 10);
         s.reduceJitter = c.getInt("reduce.hit-jitter-ticks", 3);
         s.reduceDistance = c.getDouble("reduce.distance", 2.2);
+        s.reduceStartDistance = c.getDouble("reduce.start-distance", 8.0);
         s.defaultHitH = c.getDouble("reduce.default-hit-power-horizontal", 0.4);
         s.defaultHitV = c.getDouble("reduce.default-hit-power-vertical", 0.1);
         s.arenaFallDepth = c.getDouble("reduce.arena-fall-respawn-depth", 30.0);

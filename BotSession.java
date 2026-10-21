@@ -1,10 +1,13 @@
 package me.mlgbot;
 
 import com.mojang.authlib.GameProfile;
+import com.mojang.authlib.properties.Property;
 import net.minecraft.server.v1_8_R3.EntityPlayer;
+import net.minecraft.server.v1_8_R3.IChatBaseComponent;
 import net.minecraft.server.v1_8_R3.MinecraftServer;
 import net.minecraft.server.v1_8_R3.Packet;
 import net.minecraft.server.v1_8_R3.PacketPlayOutAnimation;
+import net.minecraft.server.v1_8_R3.PacketPlayOutChat;
 import net.minecraft.server.v1_8_R3.PacketPlayOutEntityDestroy;
 import net.minecraft.server.v1_8_R3.PacketPlayOutEntityEquipment;
 import net.minecraft.server.v1_8_R3.PacketPlayOutEntityHeadRotation;
@@ -115,6 +118,8 @@ public class BotSession {
     private long nextStrafeTick;
     private long sneakUntil;
     private int strafeDir = 1;
+    private int seriesLeft;
+    private int hitCount;
     private int falls;
 
     public BotSession(MLGBotPlugin plugin, Player owner, Location loc, Mode mode, PlayerPrefs prefs) {
@@ -135,14 +140,15 @@ public class BotSession {
         Settings s = plugin.settings();
 
         // nasce em chao firme (se o ponto de 3 blocos a frente for vazio, procura outro)
-        placeNearOwner(pl, s, mode == Mode.REDUCE ? s.reduceDistance : 3.0);
+        placeNearOwner(pl, s, mode == Mode.REDUCE ? s.reduceStartDistance : 3.0);
         this.spawn = new Location(world, x, y, z);
         this.yaw = (float) Math.toDegrees(Math.atan2(-(pl.getX() - x), pl.getZ() - z));
 
         MinecraftServer server = ((CraftServer) Bukkit.getServer()).getServer();
         WorldServer ws = ((CraftWorld) world).getHandle();
 
-        String name = ChatColor.translateAlternateColorCodes('&', s.botName);
+        String name = ChatColor.translateAlternateColorCodes('&',
+                (prefs.botNick != null && !prefs.botNick.isEmpty()) ? prefs.botNick : s.botName);
         if (name.length() > 16) {
             name = name.substring(0, 16);
         }
@@ -153,6 +159,13 @@ public class BotSession {
         if (s.copySkin) {
             GameProfile src = ((CraftPlayer) owner).getHandle().getProfile();
             profile.getProperties().putAll(src.getProperties());
+        }
+        if (prefs.skinValue != null) {
+            profile.getProperties().removeAll("textures");
+            Property tex = prefs.skinSignature != null
+                    ? new Property("textures", prefs.skinValue, prefs.skinSignature)
+                    : new Property("textures", prefs.skinValue);
+            profile.getProperties().put("textures", tex);
         }
 
         this.npc = new EntityPlayer(server, ws, profile, new PlayerInteractManager(ws));
@@ -531,11 +544,25 @@ public class BotSession {
             double az = pz - z;
             double ay = (py + 0.9) - (y + 1.62);
             double d3 = Math.sqrt(ax * ax + ay * ay + az * az);
-            if (d3 <= s.reach - 0.2) {
+            if (d3 <= (mode == Mode.REDUCE ? prefs.radius : s.reach - 0.2)) {
                 send(new PacketPlayOutAnimation(npc, 0));
                 botAttack();
                 if (mode == Mode.REDUCE) {
-                    nextAttackTick = tick + s.reduceInterval + rnd.nextInt(Math.max(1, s.reduceJitter));
+                    PlayerPrefs.Training tr = prefs.training;
+                    if (tr == PlayerPrefs.Training.AIM_REDUCE) {
+                        nextAttackTick = tick + s.reduceInterval + rnd.nextInt(Math.max(1, s.reduceJitter));
+                    } else {
+                        // Classic clutcher: serie de golpes e pausa. Fastclutch: 1 golpe e pausa.
+                        if (seriesLeft <= 0) {
+                            seriesLeft = tr == PlayerPrefs.Training.FASTCLUTCH ? 1 : Math.max(1, prefs.seriesHits);
+                        }
+                        seriesLeft--;
+                        if (seriesLeft > 0) {
+                            nextAttackTick = tick + s.reduceInterval + rnd.nextInt(Math.max(1, s.reduceJitter));
+                        } else {
+                            nextAttackTick = tick + Math.max(1, (int) Math.round(prefs.seriesPause * 20.0));
+                        }
+                    }
                 } else {
                     nextAttackTick = tick + s.fightAttackInterval + rnd.nextInt(Math.max(1, s.fightAttackJitter));
                 }
@@ -578,7 +605,7 @@ public class BotSession {
      */
     private boolean placeNearOwner(Location pl, Settings s, double firstDist) {
         double yawRad = Math.toRadians(pl.getYaw());
-        double[] dists = new double[] {firstDist, 1.6, 1.0, -1.5, 0.0};
+        double[] dists = new double[] {firstDist, 6.0, 4.0, 3.0, 2.2, 1.6, 1.0, -1.5, 0.0};
         double baseY = Math.floor(pl.getY());
         for (double d : dists) {
             double cx = pl.getX() - Math.sin(yawRad) * d;
@@ -597,6 +624,36 @@ public class BotSession {
             }
         }
         return false;
+    }
+
+    /** Texto em cima da hotbar (action bar) do dono. */
+    private void actionBar(String text) {
+        try {
+            String json = "{\"text\":\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}";
+            send(new PacketPlayOutChat(IChatBaseComponent.ChatSerializer.a(json), (byte) 2));
+        } catch (Exception ignored) {
+            // sem action bar nao tem problema
+        }
+    }
+
+    /** O dono caiu: mostra quantos golpes aguentou, guarda o recorde e zera. */
+    public void onOwnerFell() {
+        if (mode != Mode.REDUCE || hitCount <= 0) {
+            hitCount = 0;
+            return;
+        }
+        String msg = "&7Voce aguentou &f" + hitCount + " &7golpes.";
+        if (hitCount > prefs.bestHits) {
+            prefs.bestHits = hitCount;
+            plugin.rooms().savePrefs();
+            msg += " &aNovo recorde!";
+        } else {
+            msg += " Recorde: &f" + prefs.bestHits;
+        }
+        owner.sendMessage(ChatColor.translateAlternateColorCodes('&', "&8[&cBot&8] " + msg));
+        hitCount = 0;
+        seriesLeft = 0;
+        nextAttackTick = tick + 30;
     }
 
     private void respawn(Settings s) {
@@ -780,11 +837,15 @@ public class BotSession {
         double dz = pl.getZ() - z;
         double dy = (pl.getY() + 0.9) - (y + 1.62);
         double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        if (dist > s.reach) {
+        if (dist > (mode == Mode.REDUCE ? prefs.radius : s.reach)) {
             return;
         }
         ownerHurtUntil = tick + s.hitCooldown;
         skipMirrorUntil = tick + 8;
+        hitCount++;
+        if (mode == Mode.REDUCE) {
+            actionBar(ChatColor.RED + "[" + hitCount + "]");
+        }
 
         double hl = Math.sqrt(dx * dx + dz * dz);
         if (hl < 1.0E-4) {
